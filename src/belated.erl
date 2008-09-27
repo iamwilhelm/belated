@@ -10,7 +10,7 @@
 -behaviour(gen_server).
 
 %% API
--export([start_link/0]).
+-export([start/0, stop/0, send/3, list/0, send_message/2]).
 
 %% gen_server callbacks
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2,
@@ -26,7 +26,8 @@
 %% Description: Starts the server
 %%--------------------------------------------------------------------
 start() ->
-    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
+    io:format("Starting Belated...~n"),
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 % Function: stop()
 % Description: Ends the server
@@ -35,9 +36,13 @@ stop() ->
 
 % Function: send(Message, Time)
 % Description: Sends a message at a specific time
-send(Message, Time) ->
-    gen_server:call(?MODULE, {send, Message, Time}).
+send(Datetime, To, Message) ->
+    gen_server:call(?MODULE, {send, Datetime, To, Message}).
 
+% Function: list()
+% Description: list all future scheduled messages
+list() ->
+    gen_server:call(?MODULE, {list}).
 
 %%====================================================================
 %% gen_server callbacks
@@ -51,7 +56,8 @@ send(Message, Time) ->
 %% Description: Initiates the server
 %%--------------------------------------------------------------------
 init([]) ->
-    {ok, ets:new(?MODULE, [])}.
+    timer:start(),
+    {ok, #state{}}.
 
 %%--------------------------------------------------------------------
 %% Function: %% handle_call(Request, From, State) -> {reply, Reply, State} |
@@ -62,10 +68,26 @@ init([]) ->
 %%                                      {stop, Reason, State}
 %% Description: Handling call messages
 %%--------------------------------------------------------------------
-handle_call(_Request, _From, State) ->
-    Reply = ok,
-    New_state = ok,
-    {reply, Reply, New_state}.
+handle_call({ send, Datetime, To, Message }, _From, State) ->
+    Seconds_interval = seconds_from_now(Datetime),
+    io:format("Scheduling message: ~s~n", [Message]),
+    Reply = try timer:apply_after(timer:seconds(Seconds_interval),
+                                  ?MODULE, 
+                                  send_message, 
+                                  [To, Message]) of
+                _ -> { scheduled, Datetime, To }
+            catch
+                % FIXME dammit, it's not catching correctly
+                error:badarg -> { not_scheduled, Datetime, To }
+            end,
+    {reply, Reply, State};
+
+% handle the call for listing scheduled messages
+%
+% TODO not yet finished
+handle_call({ list }, _From, State) ->
+    Reply = listing,
+    {reply, Reply, State}.
 
 %%--------------------------------------------------------------------
 %% Function: handle_cast(Msg, State) -> {noreply, State} |
@@ -105,3 +127,21 @@ code_change(_OldVsn, State, _Extra) ->
 %%--------------------------------------------------------------------
 %%% Internal functions
 %%--------------------------------------------------------------------
+
+% Calculates the number of seconds from now that the Future_datetime will arrive
+%
+% :Future_datetime: - {{2008, 9, 26}, {22, 32, 00}}
+seconds_from_now(Future_datetime) ->
+    Now_datetime_utc = calendar:universal_time(),
+    [Future_datetime_utc] = calendar:local_time_to_universal_time_dst(Future_datetime),
+    time_difference_in_seconds(Now_datetime_utc, Future_datetime_utc).
+
+% Calculates the difference in seconds between two date and times
+% Datetime1 < Datetime2
+time_difference_in_seconds(Datetime1, Datetime2) ->
+    calendar:datetime_to_gregorian_seconds(Datetime2) - 
+        calendar:datetime_to_gregorian_seconds(Datetime1).
+
+% Sends the actual message
+send_message(To, Message) ->
+    io:format("Send to ~s message: ~s~n", [To, Message]).
